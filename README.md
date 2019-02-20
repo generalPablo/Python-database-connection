@@ -7,3 +7,4 @@ The version of python and oracle client should also be the same in order to conn
 
 # For the SQL server example
 "Trusted_Connection=Yes" specifies that a user account is used to establish this connection.
+When "Trusted_Connection=false", User ID and Password are specified in the connection string. When true, the current Windows account credentials are used for authentication.
