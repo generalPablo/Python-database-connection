@@ -13,10 +13,10 @@ class SQLServer_connection:
         self.run_date = run_date
         # parameters to pass to the connection string for connecting to the database
         connection_variables = {'DRIVER':'{SQL Server}',
-                                'SERVER':'RMB-PPR-GNVA01',
-                                'DATABASE':'Geneva_data',
-                                'PWD':"Academia2020!",
-                                'PORT':'1433',
+                                'SERVER':'Insert server details',
+                                'DATABASE':'database name',
+                                'PWD':"database password",
+                                'PORT':'port number',
                                 'trusted_connection':'yes'}
 
         try:
