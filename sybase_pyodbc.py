@@ -17,17 +17,19 @@ class Sybase_connection:
                                 'SERVER':'DBMS20',
                                 'DATABASE':'RFDS',
                                 'UID':"",
-                                'PWD':"",
+                                'PWD':"Academia2020!",
                                 'PORT':'5000'}
 
         connection_variables['UID'] = getpass.getuser().lower()
         print("Welcome:", connection_variables['UID'])
-        connection_variables['PWD'] = getpass.getpass(prompt='Password:',stream=None)
-        print("Password is:", connection_variables['PWD'])
+        # connection_variables['PWD'] = getpass.getpass(prompt='Password:',stream=None)
+        # print("Password is:", connection_variables['PWD'])
 
         try:
             # connection string to be passed to pyodbc
-            connection_string = ('DRIVER='+connection_variables['DRIVER']+';SERVER='+connection_variables['SERVER']+';PORT='+connection_variables['PORT']+';DATABASE='+connection_variables['DATABASE']+';UID='+connection_variables['UID']+';PWD='+connection_variables['PWD'])
+            connection_string = ('DRIVER='+connection_variables['DRIVER']+';SERVER='+connection_variables['SERVER']+
+                                 ';PORT='+connection_variables['PORT']+';DATABASE='+connection_variables['DATABASE']+
+                                 ';UID='+connection_variables['UID']+';PWD='+connection_variables['PWD'])
 
             # open database connection
             conn = pyodbc.connect(connection_string)
@@ -47,18 +49,15 @@ class Sybase_connection:
                 # close connection
                 conn.close()
                 return print(data)
-        except pyodbc.ProgrammingError as err:
-            # This exception is raised of programming errors.
-            # For e.g table not found, error in mysql syntax, wrong number of parameters specified etc
-            print(err)
-        except pyodbc.InterfaceError as err:
-            # When database connection fails for some reason, MySQLdb will raise an InterfaceError.
-            # Note InterfaceError only get raise when there is internal problem in connection to the database,
-            # MySQLdb will not raise InterfaceError because of wrong database name or password.
-            print(err)
-        except pyodbc.OperationalError as err:
-            # This exception is raised for things that are not in control of the programmer.
-            # For e.g unexpected disconnect, error in memory allocation etc, selected database not exists.
-            print(err)
         except:
-            print("Connection unsuccessful.\nCheck if you have entered the correct information for database connection string.")
+            print("Connection unsuccessful.\n"
+                  "Check if you have entered the correct information for database connection string.")
+
+
+sql_code = ('''SELECT *\
+               FROM INSERT_YOUR_TABLE_NAME\
+               WHERE type_fin = 'EQUITY'
+            ''')
+
+rfds = Sybase_connection(sql_code)
+conn = rfds.db_connect()
