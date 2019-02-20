@@ -1,6 +1,5 @@
 import pandas as pd
 import pyodbc
-import getpass
 
 # This line ensures that the connection closes after running the connection string
 pyodbc.pooling = False
@@ -14,28 +13,25 @@ class Sybase_connection:
         self.run_date = run_date
         # parameters to pass to the connection string for connecting to the database
         connection_variables = {'DRIVER':'{Adaptive Server Enterprise}',
-                                'SERVER':'DBMS20',
-                                'DATABASE':'RFDS',
-                                'UID':"",
-                                'PWD':"Academia2020!",
-                                'PORT':'5000'}
-
-        connection_variables['UID'] = getpass.getuser().lower()
-        print("Welcome:", connection_variables['UID'])
-        # connection_variables['PWD'] = getpass.getpass(prompt='Password:',stream=None)
-        # print("Password is:", connection_variables['PWD'])
+                                'SERVER':'Insert server details',
+                                'DATABASE':'Insert databse name',
+                                'UID':"insert user ID",
+                                'PWD':"Insert password",
+                                'PORT':'Insert port number'}
 
         try:
-            # connection string to be passed to pyodbc
+            # connection string to be passed into pyodbc
             connection_string = ('DRIVER='+connection_variables['DRIVER']+';SERVER='+connection_variables['SERVER']+
                                  ';PORT='+connection_variables['PORT']+';DATABASE='+connection_variables['DATABASE']+
                                  ';UID='+connection_variables['UID']+';PWD='+connection_variables['PWD'])
 
-            # open database connection
+            # open database connection using the connection string
             conn = pyodbc.connect(connection_string)
 
             if run_date != None:
-                # execute the sql code
+                # if pull the data for a specified date
+                # the date will be stored in the param variable
+                # note that the date should be in the same format as stored in the database
                 param = [self.run_date]
                 data = pd.read_sql(self.sql_code,conn,params=param)
                 # close connection
@@ -53,11 +49,25 @@ class Sybase_connection:
             print("Connection unsuccessful.\n"
                   "Check if you have entered the correct information for database connection string.")
 
+#######################################################################################################################
+#                       Example of how to use the code                                                                #
+#######################################################################################################################
 
+# running the sql code without the date specified
+# Type your SQL code below
 sql_code = ('''SELECT *\
                FROM INSERT_YOUR_TABLE_NAME\
-               WHERE type_fin = 'EQUITY'
+               WHERE INSERT_WHERE_CLAUSE
             ''')
+connection = Sybase_connection(sql_code)
+data = connection.db_connect()
 
-rfds = Sybase_connection(sql_code)
-conn = rfds.db_connect()
+# if you want to pull data for a specified date
+sql_code2 = ('''SELECT *\
+               FROM INSERT_YOUR_TABLE_NAME\
+               WHERE INSERT_WHERE_CLAUSE AND DATE_VARIABLE = CAST (? AS datetime)
+            ''')
+date_example = '2019/02/19'
+
+connection = Sybase_connection(sql_code2)
+data2 = connection.db_connect(date_example)
