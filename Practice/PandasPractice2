@@ -1,0 +1,14 @@
+def unsettled_bonds_mtm(value_date):
+    # sql code to get the unsettled bonds mtm
+    sql_code  = ('''SELECT processing_org AS [Fund_short_code], sum(pricer_npv) AS [MTM_unsettled_bonds]\
+                    FROM cal_trade\
+                    WHERE run_date = CAST(? AS datetime)\
+                    AND product_type IN ('Bond','BondFRNBESA','BondMMInterest','BondMMDiscount')\
+                    AND settle_date > run_date\
+                    GROUP BY processing_org\
+                    ORDER BY processing_org
+                ''')
+    # connection string to connect to the FICC_PB_Reports database
+    portal = FiccDatabase(sql_code)
+    unsettled_bond_mtm = portal.db_connect(value_date)
+    return unsettled_bond_mtm
