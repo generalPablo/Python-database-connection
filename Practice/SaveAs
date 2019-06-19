@@ -1,0 +1,135 @@
+import pandas as pd
+from FICC_PBDB_Connection import FiccDatabase
+from tkinter import filedialog
+from tkinter import *
+import os
+import sys
+import wx
+
+def mapping_table(value_date):
+    sql_code = ('''SELECT p.asset_manager AS 'Asset_Manager', s.account_name AS 'Client full name',s.client_name As 'Fund_short_code', MX_id AS 'Murex_ID', p.fco_code AS 'FCO_code'
+                    FROM smart_account_balance AS s
+                    INNER JOIN processing_org_mapper AS p on s.client_name=p.calypso_processing_org_id
+                    WHERE s.run_date = CAST(? AS datetime) AND s.account_type = 'call'
+                    ORDER BY 1
+                   ''')
+    connection = FiccDatabase(sql_code)
+    client_list = connection.db_connect(value_date)
+    return client_list
+
+# This function is used to get the Net present value for each fund
+def get_npv(value_date):
+    # sql code to get the npv from the database table called "cal_trade"
+    sql_code = ('''SELECT processing_org AS 'Fund_short_code', sum(pricer_npv) AS 'Net_mtm'\
+                   FROM cal_trade\
+                   WHERE run_date =CAST(? AS datetime)\
+                   GROUP BY run_date, processing_org\
+                   ORDER BY processing_org ASC''')
+    # connect to the portal
+    portal = FiccDatabase(sql_code)
+    npv = portal.db_connect(value_date)
+
+    # The if statement below checks whether the dataframe is empty and returns a warning if it empty.
+    if len(npv.index) == 0:
+        app = wx.App()
+        dlg = wx.MessageDialog(None, "There is no data for the specified date.\
+                                     \nCheck that the date is not a holiday/weekend or if the data has been loaded into the DB.",
+                               "Warning!", wx.ICON_ERROR)
+        dlg.ShowModal()  # Show it
+        dlg.Destroy()  # finally destroy it when finished.
+        app.MainLoop()
+        del app
+        sys.exit(0)
+    else:
+        return npv
+
+# This function is used to get the FCO cash for each fund
+def get_fco_cash(value_date):
+
+    sql_code = ('''SELECT B.calypso_processing_org_id AS 'Fund_short_code',sum(A.amount) as [FCO_Cash]\
+                   FROM future_clearing_balance AS A, processing_org_mapper AS B\
+                   WHERE A.run_date = CAST(? as datetime) AND A.account_name = B.fco_code\
+                   Group BY A.run_date, B.calypso_processing_org_id,A.account_name\
+                   ORDER BY B.calypso_processing_org_id ASC''')
+    # # connect to the portal
+    portal = FiccDatabase(sql_code)
+    futures_balances = portal.db_connect(value_date)
+    return futures_balances
+
+# This function is used to the cash from collateral+call account
+def get_cash_accounts(value_date):
+
+    sql_code = ('''SELECT client_name AS 'Fund_short_code', SUM(abs(principal+interest)) AS [FIPB_Cash_balance]\
+                   FROM smart_account_balance\
+                   WHERE run_date = CAST(? AS datetime)\
+                   GROUP BY run_date, client_name\
+                   ORDER BY client_name ASC''')
+    # # connect to the portal
+    portal = FiccDatabase(sql_code)
+    cash_balances = portal.db_connect(value_date)
+
+    return cash_balances
+
+# this function is gets the collateral account balances
+def get_collateral(value_date):
+
+    sql_code = ('''SELECT client_name AS 'Fund_short_code', SUM(abs(principal+interest)) AS [Collateral_balance]\
+                   FROM smart_account_balance\
+                   WHERE run_date = CAST(? AS datetime) AND portfolio = 'COL Prim Broking'\
+                   GROUP BY run_date, client_name\
+                   ORDER BY client_name ASC''')
+    # connect to the portal
+    portal = FiccDatabase(sql_code)
+    collateral_balance = portal.db_connect(value_date)
+
+    return collateral_balance
+
+# this function is defined to get the cash balances in the call account
+def get_call_balance(value_date):
+
+    sql_code = ('''SELECT client_name AS 'Fund_short_code', SUM(abs(principal+interest)) AS [Call_account]\
+                   FROM smart_account_balance\
+                   WHERE run_date = CAST(? AS datetime) AND portfolio = 'PB Call Accounts'\
+                   GROUP BY run_date, client_name\
+                   ORDER BY client_name ASC''')
+
+    # connect to the portal
+    portal = FiccDatabase(sql_code)
+    call_account_balance = portal.db_connect(value_date)
+
+    return call_account_balance
+
+
+def get_fund_nav(value_date):
+    #value_date = input("Enter the valuation date in the following , i.e. YYYY/MM/DD.")
+    npv = get_npv(value_date)
+    fco_cash = get_fco_cash(value_date)
+    fi_cash = get_cash_accounts(value_date)
+    manager = mapping_table(value_date)
+    # Combine the data using Fund_short_code
+    merged_data = pd.merge(pd.merge(fco_cash, npv, on='Fund_short_code', how='outer'), fi_cash, on='Fund_short_code',how='outer')
+    asset_manager = pd.merge(manager,merged_data,on='Fund_short_code',how='inner')
+    # Fill the values with "nan" with 0
+    data = asset_manager.fillna(0)
+
+    # Calculate the NAV
+    data['NAV'] = data['Net_mtm'] + data['FIPB_Cash_balance'] + data['FCO_Cash']
+
+    return data[data.NAV>100]
+
+
+# data[data['Fund_short_code'].str.match(x)]
+
+# export the data to excel
+def export_nav_to_excel(value_date):
+    # Save file to a location using Tkinter
+    root = Tk()
+    root.filename = filedialog.askdirectory()
+    root.destroy()
+    location = os.path.join(root.filename, value_date + '.xlsx').replace("/","\\")
+    print('File saved in:'+location)
+    # export the data to excel
+    data = get_fund_nav(value_date)
+    df_merge = data
+    export_to_excel = df_merge.to_excel(location,index=False)
+    return export_to_excel
