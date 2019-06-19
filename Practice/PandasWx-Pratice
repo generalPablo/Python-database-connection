@@ -1,1 +1,174 @@
+"""
+Created on 2019-04-25
+@author: Paballo Nhambiri
+"""
+import sys
+import wx
+import time
+import xlsxwriter
+import pandas as pd
+import numpy as np
+from marktomarket import (derivatives_mtm, unsettled_bonds_mtm, settled_bonds, ceded_assets)
+from NAV import (get_fco_cash, get_call_balance, get_collateral, get_npv, mapping_table, export_nav_to_excel)
+from marktomarket import etl_values
+from tkinter import filedialog
+from tkinter import *
+import os
 
+
+class MarginCalculator:
+
+    def margincall(self, value_date):
+        clients_list = mapping_table(value_date)
+        npv = get_npv(value_date)
+        derivative_npv = derivatives_mtm(value_date)
+        unsettled_bonds_npv = unsettled_bonds_mtm(value_date)
+        settled_bonds_npv = settled_bonds(value_date)
+
+        from functools import reduce
+        # using the reduce function to merge multiple dataframes
+        mtm = [clients_list, npv, derivative_npv, settled_bonds_npv, unsettled_bonds_npv]
+
+        mtm_merge = reduce(lambda left, right: pd.merge(left, right, how='outer', on='Fund_short_code'), mtm)
+        mtm_merge = mtm_merge.fillna(0)
+        # add mtm for derivatives + mtm for unsettled bonds
+        mtm_merge['MTM_excl_setbonds'] = mtm_merge['MTM_derivatives'] + mtm_merge['MTM_unsettled_bonds']
+
+        vm_clients = ['client1', 'client2', 'client3', 'client4', 'client5','client6']
+        mtm_merge.loc[mtm_merge['Fund_short_code'].isin(vm_clients), 'MTM_excl_setbonds'] = 0
+
+        # adding etl values to for all client
+        etl = etl_values(value_date)
+        client_etl = pd.merge(mtm_merge, etl, how='outer', on='Fund_short_code')
+
+        # calculating the collateral required
+        client_etl['Collateral_required'] = np.where(client_etl['MTM_excl_setbonds'] < 0,
+                                                     client_etl['MTM_excl_setbonds'] + client_etl['ETL_x_1_5'],
+                                                     client_etl['ETL_x_1_5'])
+
+        # Adding ceded assets balance
+        pledged_assets = ceded_assets(value_date)
+        data1 = pd.merge(client_etl, pledged_assets, how='outer', on='Fund_short_code')
+
+        # Adding collateral balance
+        col_balance = get_collateral(value_date)
+        col_balance['Collateral_balance'] = -1 * col_balance['Collateral_balance']
+        data2 = pd.merge(data1, col_balance, how='outer', on='Fund_short_code')
+
+        # Adding MTM collateral
+        data2['MTM_collateral'] = np.where(data2['MTM_excl_setbonds'] > 0, data2['MTM_excl_setbonds'], 0)
+
+        # Adding fco cash and call account balance
+        fco_cash = get_fco_cash(value_date)
+        call_acc_balance = get_call_balance(value_date)
+        balances = [data2, fco_cash, call_acc_balance]
+        all_data = reduce(lambda left, right: pd.merge(left, right, how='outer', on='Fund_short_code'), balances)
+        all_data[['Asset_Manager']] = all_data[['Asset_Manager']].fillna(value="Delete")
+
+        # Delete all the funds that are either closed or are for reporting only
+        final_data = all_data.fillna(0)
+        final_data = final_data[final_data.Asset_Manager != "Delete"]
+
+        delete_client = pd.read_csv(
+            r'\\iodine\Treasury\Sup\Trx\Share\PrimeBroker\Paballo\Python\Margin_calculator_MX\closed_funds.csv',
+            skiprows=0)
+        closed_funds = delete_client['Fund_short_code'].tolist()
+
+        final_data.loc[final_data['Fund_short_code'].isin(closed_funds), 'Asset_Manager'] = "Delete"
+        margin_table = final_data[final_data.Asset_Manager != "Delete"]
+
+        return margin_table
+
+    def margin_analysis(self, value_date):
+        # calling margin data from the margincall function
+        data = self.margincall(value_date)
+        rows = len(data.index) + 1
+        print("total rows: " + str(rows))
+        # allow user to choose where to save the file with tkinter
+        root = Tk()
+        root.withdraw()
+        root.filename = filedialog.askdirectory()
+        root.destroy()
+        location = os.path.join(root.filename, 'Margin_analysis_' + value_date + '.xlsx').replace("/", "\\")
+        print('File saved in:' + location)
+
+        # we will now use xlwriter to output data to excel, format it, and calculate margin call
+        writer = pd.ExcelWriter(location, engine='xlsxwriter')
+        data.to_excel(writer, sheet_name='Margin_analysis_' + value_date, index=False)
+
+        ########################################################################################################################
+        #                                                                                                                      #
+        # Conditional formatting of columns using xlswriter                                                                    #
+        #                                                                                                                      #
+        ########################################################################################################################
+
+        workbook = writer.book
+        worksheet = writer.sheets['Margin_analysis_' + value_date]
+
+        # Add a number format for cells with money.
+        money = workbook.add_format({'num_format': '# ### ### ###'})
+
+        # format money columns
+        worksheet.conditional_format('F2:T' + str(rows),
+                                     {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': money})
+
+        # Add a format. Light red fill with dark red text.
+        format1 = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+
+        # Add a format. Green fill with dark green text to margin call column S
+        format2 = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+
+        worksheet.conditional_format('S2:S' + str(rows),
+                                     {'type': 'cell', 'criteria': '>=', 'value': 50, 'format': format1})
+
+        # Write another conditional format over the same range to margin call column S
+        worksheet.conditional_format('S2:S' + str(rows),
+                                     {'type': 'cell', 'criteria': '<', 'value': 50, 'format': format2})
+
+        # Adding margin call formula
+        margincall_formula = '=([@[Ceded_asset_balance]]+[@[Collateral_balance]])-[@[Collateral_required]]-[@[MTM_collateral]]-[@[FCO_Cash]]'
+
+        # add a NAV column
+        nav_formula = '=SUM(ABS([@[Collateral_balance]]),[@[Net_mtm]],[@[FCO_Cash]],[@[Call_account]])'
+
+        # ETL to Nav formating
+        percentage = workbook.add_format({'num_format': '0%'})
+        etl_nav_formula = '=IFERROR(ABS([@[ETL_x_1_5]]/[@NAV]),0)'
+        worksheet.conditional_format('U2:U' + str(rows),{'type': 'cell', 'criteria': '>=', 'value': 0, 'format': percentage})
+
+        format_red = workbook.add_format({'bg_color': '#FF0000'})
+        format_orange = workbook.add_format({'bg_color': '#FF9900'})
+        format_green = workbook.add_format({'bg_color': '#00FF00'})
+
+        worksheet.conditional_format('U2:U' + str(rows),{'type': 'cell', 'criteria': '>=', 'value': 0.695, 'format': format_red})
+        worksheet.conditional_format('U2:U' + str(rows),{'type': 'cell', 'criteria': 'between', 'minimum': 0.6, 'maximum': 0.694,'format': format_orange})
+        worksheet.conditional_format('U2:U' + str(rows),{'type': 'cell', 'criteria': '<', 'value': 0.599, 'format': format_green})
+
+        worksheet.add_table('A1:U' + str(rows), {'columns': [{'header': 'Asset_Manager'},
+                                                             {'header': 'Client full name'},
+                                                             {'header': 'Fund_short_code'},
+                                                             {'header': 'Mure_ID'},
+                                                             {'header': 'FCO_code'},
+                                                             {'header': 'Net_mtm'},
+                                                             {'header': 'MTM_derivatives'},
+                                                             {'header': 'MTM_Settled_bonds'},
+                                                             {'header': 'MTM_unsettled_bonds'},
+                                                             {'header': 'MTM_excl_setbonds'},
+                                                             {'header': 'ETL'},
+                                                             {'header': 'ETL_x_1_5'},
+                                                             {'header': 'Collateral_required'},
+                                                             {'header': 'Ceded_asset_balance'},
+                                                             {'header': 'Collateral_balance'},
+                                                             {'header': 'MTM_collateral'},
+                                                             {'header': 'FCO_Cash'},
+                                                             {'header': 'Call_account'},
+                                                             {'header': 'Margin_call',
+                                                              'formula': margincall_formula},
+                                                             {'header': 'NAV',
+                                                              'formula': nav_formula},
+                                                             {'header': 'ETL/NAV',
+                                                              'formula': etl_nav_formula}
+                                                             ]})
+
+        writer.save()
+        return location
